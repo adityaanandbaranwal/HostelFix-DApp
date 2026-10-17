@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HostelFix | Decentralized Maintenance Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans p-6">
+
+    <div class="max-w-4xl mx-auto space-y-6">
+        <!-- Header & Wallet Connection -->
+        <header class="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-emerald-400">🏢 HostelFix DApp</h1>
+                <p class="text-sm text-slate-400">Immutable Hostel Maintenance & Grievance Ledger</p>
+            </div>
+            <div class="text-right">
+                <button id="connectBtn" onclick="connectWallet()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-5 py-2.5 rounded-lg transition shadow">
+                    Connect MetaMask
+                </button>
+                <p id="walletAddress" class="text-xs text-slate-400 mt-2 font-mono">Status: Not Connected</p>
+                <p id="wardenAddress" class="text-xs text-amber-400 font-mono hidden"></p>
+            </div>
+        </header>
+
+        <!-- Notification Banner -->
+        <div id="statusBox" class="hidden p-4 rounded-lg border text-sm font-medium"></div>
+
+        <!-- Action Grid -->
+        <div class="grid md:grid-cols-2 gap-6">
+            <!-- Report Issue Card (Any User) -->
+            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow">
+                <h2 class="text-lg font-semibold mb-4 text-emerald-300">Log Maintenance Issue</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Block & Room Number</label>
+                        <input id="roomInput" type="text" placeholder="e.g., Block 14 - Room 302" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Issue Description</label>
+                        <input id="descInput" type="text" placeholder="e.g., Broken ceiling fan regulator" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500">
+                    </div>
+                    <button onclick="reportIssue()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2 rounded-lg transition">
+                        Submit to Blockchain
+                    </button>
+                </div>
+            </div>
+
+            <!-- Resolve Issue Card (Warden Only) -->
+            <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow flex flex-col justify-between">
+                <div>
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-lg font-semibold text-amber-300">Warden Resolution Portal</h2>
+                        <span class="text-xs bg-amber-900/50 text-amber-300 px-2 py-1 rounded border border-amber-700/50">Admin Only</span>
+                    </div>
+                    <p class="text-xs text-slate-400 mb-4">Only the deploying Warden wallet can mark an issue ID as resolved. Unauthorised wallets will trigger a smart contract revert.</p>
+                    <div>
+                        <label class="block text-xs text-slate-400 mb-1">Issue ID to Resolve</label>
+                        <input id="resolveIdInput" type="number" placeholder="Enter Issue ID (e.g., 1)" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-500">
+                    </div>
+                </div>
+                <button onclick="resolveIssue()" class="w-full mt-4 bg-amber-600 hover:bg-amber-500 text-white font-medium py-2 rounded-lg transition">
+                    Mark Issue Resolved
+                </button>
+            </div>
+        </div>
+
+        <!-- Blockchain Data Table -->
+        <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-slate-200">On-Chain Issue Ledger</h2>
+                <button onclick="loadIssues()" class="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg transition">
+                    🔄 Refresh Data
+                </button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-sm">
+                    <thead>
+                        <tr class="border-b border-slate-700 text-slate-400 text-xs uppercase">
+                            <th class="py-3 px-2">ID</th>
+                            <th class="py-3 px-2">Room</th>
+                            <th class="py-3 px-2">Description</th>
+                            <th class="py-3 px-2">Reported By</th>
+                            <th class="py-3 px-2">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="issuesTableBody" class="divide-y divide-slate-700/50 text-slate-300">
+                        <tr>
+                            <td colspan="5" class="py-6 text-center text-slate-500">Connect wallet to fetch blockchain data...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ================= CONFIGURATION =================
+        const CONTRACT_ADDRESS = "0x4cC79a3f2ae88cf01351Ae0E9d5cf03E5E0F98b4";
+        
+        const CONTRACT_ABI = [
+            "function warden() view returns (address)",
+            "function issueCount() view returns (uint256)",
+            "function reportIssue(string _roomNumber, string _description) public",
+            "function resolveIssue(uint256 _id) public",
+            "function getAllIssues() view returns (tuple(uint256 id, string roomNumber, string description, address reportedBy, bool isResolved, uint256 timestamp)[])"
+        ];
+
+        let provider, signer, contract;
+
+        function showStatus(message, isError = false) {
+            const box = document.getElementById("statusBox");
+            box.className = `p-4 rounded-lg border text-sm font-medium break-all ${
+                isError ? "bg-red-950/60 border-red-700 text-red-300" : "bg-emerald-950/60 border-emerald-700 text-emerald-300"
+            }`;
+            box.innerText = message;
+            box.classList.remove("hidden");
+        }
+
+        async function connectWallet() {
+            if (!window.ethereum) {
+                return showStatus("MetaMask not detected! Please install the MetaMask extension.", true);
+            }
+            try {
+                provider = new ethers.BrowserProvider(window.ethereum);
+                await provider.send("eth_requestAccounts", []);
+                signer = await provider.getSigner();
+                const userAddress = await signer.getAddress();
+
+                document.getElementById("connectBtn").innerText = "Wallet Connected";
+                document.getElementById("connectBtn").className = "bg-slate-700 text-emerald-400 font-semibold px-5 py-2.5 rounded-lg border border-emerald-500/40";
+                document.getElementById("walletAddress").innerText = `Connected: ${userAddress}`;
+
+                contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+                
+                const wardenAddr = await contract.warden();
+                const wardenEl = document.getElementById("wardenAddress");
+                wardenEl.innerText = `Warden Admin: ${wardenAddr}`;
+                wardenEl.classList.remove("hidden");
+
+                showStatus("Successfully connected to MetaMask and loaded Smart Contract!");
+                await loadIssues();
+            } catch (err) {
+                showStatus(`Connection Error: ${err.message}`, true);
+            }
+        }
+
+        async function reportIssue() {
+            if (!contract) return showStatus("Please connect MetaMask first!", true);
+            const room = document.getElementById("roomInput").value.trim();
+            const desc = document.getElementById("descInput").value.trim();
+
+            try {
+                showStatus("Initiating transaction... Please confirm in MetaMask.");
+                const tx = await contract.reportIssue(room, desc);
+                showStatus(`Transaction submitted! Waiting for confirmation... Hash: ${tx.hash}`);
+                await tx.wait();
+                showStatus(`Success! Issue recorded on-chain. Tx Hash: ${tx.hash}`);
+                
+                document.getElementById("roomInput").value = "";
+                document.getElementById("descInput").value = "";
+                await loadIssues();
+            } catch (err) {
+                const reason = err.reason || err.shortMessage || err.message;
+                showStatus(`Transaction Failed / Reverted: ${reason}`, true);
+            }
+        }
+
+        async function resolveIssue() {
+            if (!contract) return showStatus("Please connect MetaMask first!", true);
+            const id = document.getElementById("resolveIdInput").value;
+
+            try {
+                showStatus("Initiating resolution transaction... Please confirm in MetaMask.");
+                const tx = await contract.resolveIssue(id);
+                showStatus(`Transaction submitted! Waiting for confirmation... Hash: ${tx.hash}`);
+                await tx.wait();
+                showStatus(`Success! Issue #${id} marked as resolved. Tx Hash: ${tx.hash}`);
+                
+                document.getElementById("resolveIdInput").value = "";
+                await loadIssues();
+            } catch (err) {
+                const reason = err.reason || err.shortMessage || err.message;
+                showStatus(`Transaction Failed / Reverted: ${reason}`, true);
+            }
+        }
+
+        async function loadIssues() {
+            if (!contract) return;
+            try {
+                const issues = await contract.getAllIssues();
+                const tbody = document.getElementById("issuesTableBody");
+                tbody.innerHTML = "";
+
+                if (issues.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500">No maintenance issues logged on-chain yet.</td></tr>`;
+                    return;
+                }
+
+                issues.forEach(issue => {
+                    const statusBadge = issue.isResolved
+                        ? `<span class="bg-emerald-950 text-emerald-400 border border-emerald-700 px-2.5 py-0.5 rounded-full text-xs">Resolved</span>`
+                        : `<span class="bg-amber-950 text-amber-400 border border-amber-700 px-2.5 py-0.5 rounded-full text-xs">Pending</span>`;
+
+                    const shortReporter = `${issue.reportedBy.slice(0, 6)}...${issue.reportedBy.slice(-4)}`;
+
+                    const row = `
+                        <tr class="hover:bg-slate-700/30">
+                            <td class="py-3 px-2 font-mono text-emerald-400">#${issue.id}</td>
+                            <td class="py-3 px-2 font-medium">${issue.roomNumber}</td>
+                            <td class="py-3 px-2">${issue.description}</td>
+                            <td class="py-3 px-2 font-mono text-xs text-slate-400" title="${issue.reportedBy}">${shortReporter}</td>
+                            <td class="py-3 px-2">${statusBadge}</td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+            } catch (err) {
+                showStatus(`Failed to fetch issues: ${err.message}`, true);
+            }
+        }
+
+        if (window.ethereum) {
+            window.ethereum.on('accountsChanged', () => window.location.reload());
+            window.ethereum.on('chainChanged', () => window.location.reload());
+        }
+    </script>
+</body>
+</html>
